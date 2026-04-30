@@ -1,0 +1,9 @@
+{
+  "item": {
+    "distDir": "./dist",
+    "buildCommand": "npm run build",
+    "title": "スロットゲーム",
+    "description": "A sample item created with XRift item template",
+    "thumbnailPath": "thumbnail.png"
+  }
+}
