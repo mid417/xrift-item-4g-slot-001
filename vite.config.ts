@@ -54,6 +54,11 @@ export default defineConfig({
       },
     }),
   ],
+  server: {
+    watch: {
+      ignored: ['**/.vscode/**'],
+    },
+  },
   build: {
     target: 'esnext',
     minify: false,
