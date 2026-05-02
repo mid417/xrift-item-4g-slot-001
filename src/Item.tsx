@@ -1,8 +1,24 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Text } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody } from '@react-three/rapier'
 import { DoubleSide, Shape } from 'three'
+import { rollLeverHitKind } from './leverLottery'
+import { ALL_PAYLINES, getActivePaylines, isHorizontalPayline, type PaylineDefinition } from './paylines'
+import {
+  MISS_OUTCOME,
+  REEL_STRIPS,
+  REEL_SYMBOLS_PER_STRIP,
+  evaluateBoard,
+  resolveSpinBet,
+  resolveBonusFlag,
+  resolveStopIndex,
+  type BonusFlag,
+  type HitKind,
+  type Outcome,
+  type ReelSymbol,
+  wrapIndex,
+} from './slotLogic'
 
 export interface ItemProps {
   position?: [number, number, number]
@@ -13,22 +29,11 @@ export const ITEM_MODEL_SCALE = 1 / 5
 const ITEM_BASE_Y_SCALE_COMPENSATION = 1 / ITEM_MODEL_SCALE
 const PEDESTAL_HEIGHT = 4.8
 
-type ReelSymbol = '7' | 'BAR' | 'BELL' | 'CHERRY' | 'REPLAY' | 'MELON' | 'PLUM'
-type HitKind = 'BIG' | 'REG' | 'BELL' | 'PLUM' | 'MELON' | 'REPLAY' | 'CHERRY' | 'MISS'
-
 interface ReelState {
   position: number
   targetIndex: number
   stopAt: number | null
   isSpinning: boolean
-}
-
-interface Outcome {
-  kind: HitKind
-  payout: number
-  title: string
-  detail: string
-  color: string
 }
 
 interface ControlButtonProps {
@@ -43,7 +48,6 @@ interface ControlButtonProps {
 const WINDOW_CENTER_Y = 2.7
 const REEL_X_POSITIONS = [-0.82, 0, 0.82] as const
 const START_CREDITS = 50
-const REEL_SYMBOLS_PER_STRIP = 21
 const REEL_SYMBOL_ANGLE = (Math.PI * 2) / REEL_SYMBOLS_PER_STRIP
 const REEL_RADIUS = 0.91
 const ROW_HEIGHT = 2 * REEL_RADIUS * Math.sin(REEL_SYMBOL_ANGLE / 2)
@@ -68,21 +72,9 @@ const REEL_BEZEL_WIDTH = REEL_WINDOW_WIDTH + 0.08
 const REEL_BEZEL_HEIGHT = REEL_WINDOW_HEIGHT + 0.08
 const REEL_BEZEL_DEPTH = 0.02
 const REEL_BEZEL_BORDER = 0.04
-const MISS_OUTCOME: Outcome = {
-  kind: 'MISS',
-  payout: 0,
-  title: 'NO HIT',
-  detail: 'NO HIT',
-  color: '#b9b2a6',
-}
-
-const ACTIVE_LINE_ROWS: Record<number, number[]> = {
-  0: [],
-  1: [0],
-  2: [0, -1],
-  3: [-1, 0, 1],
-}
-
+const PAYLINE_DISPLAY_WIDTH = 2.56
+const PAYLINE_DISPLAY_THICKNESS = 0.03
+const PAYLINE_DISPLAY_Z = 1.19
 const SYMBOL_LABELS: Record<ReelSymbol, string> = {
   '7': '7',
   BAR: 'BAR',
@@ -103,102 +95,32 @@ const SYMBOL_COLORS: Record<ReelSymbol, string> = {
   PLUM: '#c084fc',
 }
 
-const REEL_STRIPS: ReelSymbol[][] = [
-  [
-    'BELL',
-    'PLUM',
-    '7',
-    'CHERRY',
-    'REPLAY',
-    'MELON',
-    'BELL',
-    'PLUM',
-    'BAR',
-    'REPLAY',
-    'BELL',
-    'MELON',
-    'PLUM',
-    'CHERRY',
-    '7',
-    'BELL',
-    'REPLAY',
-    'BAR',
-    'PLUM',
-    'MELON',
-    'BELL',
-  ],
-  [
-    'PLUM',
-    'BELL',
-    'REPLAY',
-    '7',
-    'MELON',
-    'BAR',
-    'PLUM',
-    'BELL',
-    'REPLAY',
-    'MELON',
-    '7',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'MELON',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'PLUM',
-  ],
-  [
-    'REPLAY',
-    'BELL',
-    'PLUM',
-    'MELON',
-    '7',
-    'BAR',
-    'REPLAY',
-    'PLUM',
-    'BELL',
-    'MELON',
-    'BAR',
-    'PLUM',
-    'REPLAY',
-    'BELL',
-    '7',
-    'MELON',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'REPLAY',
-  ],
-]
-
-REEL_STRIPS.forEach((strip, reelIndex) => {
-  if (strip.length !== REEL_SYMBOLS_PER_STRIP) {
-    throw new Error(`Reel ${reelIndex + 1} must have ${REEL_SYMBOLS_PER_STRIP} symbols.`)
-  }
-})
-
-function wrapIndex(value: number, length: number): number {
-  return ((value % length) + length) % length
-}
+const PAYLINE_DEBUG_LABELS = {
+  top: 'TOP',
+  center: 'CTR',
+  bottom: 'BTM',
+  diagonalDown: 'DOWN',
+  diagonalUp: 'UP',
+} as const
 
 function wrapDistance(current: number, target: number, length: number): number {
   return ((target - current) % length + length) % length
 }
 
-function pickOne<T>(values: T[]): T {
-  return values[Math.floor(Math.random() * values.length)]
-}
-
-function symbolAt(strip: ReelSymbol[], centerIndex: number, rowOffset: number): ReelSymbol {
-  return strip[wrapIndex(centerIndex + rowOffset, strip.length)]
-}
-
 function lineY(rowOffset: number): number {
   return WINDOW_CENTER_Y - rowOffset * ROW_HEIGHT
+}
+
+function paylineMeshTransform(payline: PaylineDefinition) {
+  const startY = lineY(payline.rowOffsets[0])
+  const endY = lineY(payline.rowOffsets[2])
+  const deltaY = endY - startY
+
+  return {
+    length: Math.sqrt(PAYLINE_DISPLAY_WIDTH ** 2 + deltaY ** 2),
+    position: [0, (startY + endY) / 2, PAYLINE_DISPLAY_Z] as [number, number, number],
+    rotation: [0, 0, Math.atan2(deltaY, PAYLINE_DISPLAY_WIDTH)] as [number, number, number],
+  }
 }
 
 function traceRoundedRect(
@@ -258,194 +180,6 @@ function createInitialReels(): ReelState[] {
     stopAt: null,
     isSpinning: false,
   }))
-}
-
-function chooseSymbolIndex(reelIndex: number, symbol: ReelSymbol): number {
-  const strip = REEL_STRIPS[reelIndex]
-  const candidates = strip.flatMap((entry, index) => (entry === symbol ? [index] : []))
-  return pickOne(candidates)
-}
-
-function buildLineTarget(symbol: ReelSymbol, rowOffset: number): [number, number, number] {
-  return REEL_STRIPS.map((_strip, reelIndex) => {
-    const centerIndex = chooseSymbolIndex(reelIndex, symbol) - rowOffset
-    return wrapIndex(centerIndex, REEL_STRIPS[reelIndex].length)
-  }) as [number, number, number]
-}
-
-function buildRandomTarget(): [number, number, number] {
-  return REEL_STRIPS.map((strip) => Math.floor(Math.random() * strip.length)) as [number, number, number]
-}
-
-function createReplayOutcome(bet: number): Outcome {
-  return {
-    kind: 'REPLAY',
-    payout: bet,
-    title: 'REPLAY',
-    detail: `REPLAY ${bet}`,
-    color: '#67e8f9',
-  }
-}
-
-function evaluateBoard(centerIndices: [number, number, number], bet: number): Outcome {
-  const activeRows = ACTIVE_LINE_ROWS[bet]
-
-  for (const rowOffset of activeRows) {
-    const lineSymbols = REEL_STRIPS.map((strip, reelIndex) => {
-      return symbolAt(strip, centerIndices[reelIndex], rowOffset)
-    }) as [ReelSymbol, ReelSymbol, ReelSymbol]
-
-    if (lineSymbols.every((symbol) => symbol === '7')) {
-      return {
-        kind: 'BIG',
-        payout: 711,
-        title: 'BIG BONUS',
-        detail: 'BIG BONUS 711',
-        color: '#fbbf24',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'BAR')) {
-      return {
-        kind: 'REG',
-        payout: 104,
-        title: 'REG BONUS',
-        detail: 'REG BONUS 104',
-        color: '#f472b6',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'BELL')) {
-      return {
-        kind: 'BELL',
-        payout: 15,
-        title: 'BELL',
-        detail: 'BELL 15',
-        color: '#fde047',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'PLUM')) {
-      return {
-        kind: 'PLUM',
-        payout: 10,
-        title: 'PLUM',
-        detail: 'PLUM 10',
-        color: '#d8b4fe',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'MELON')) {
-      return {
-        kind: 'MELON',
-        payout: 8,
-        title: 'MELON',
-        detail: 'MELON 8',
-        color: '#6ee7b7',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'REPLAY')) {
-      return createReplayOutcome(bet)
-    }
-  }
-
-  const leftVisible = [-1, 0, 1].map((rowOffset) => symbolAt(REEL_STRIPS[0], centerIndices[0], rowOffset))
-  if (leftVisible.includes('CHERRY')) {
-    return {
-      kind: 'CHERRY',
-      payout: 2,
-      title: 'CHERRY',
-      detail: 'CHERRY 2',
-      color: '#fb7185',
-    }
-  }
-
-  return MISS_OUTCOME
-}
-
-function buildMissTarget(bet: number): [number, number, number] {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const candidate = buildRandomTarget()
-    if (evaluateBoard(candidate, bet).kind === 'MISS') {
-      return candidate
-    }
-  }
-
-  return [0, 4, 8]
-}
-
-function buildCherryTarget(bet: number): [number, number, number] {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
-    const candidate: [number, number, number] = [
-      chooseSymbolIndex(0, 'CHERRY'),
-      Math.floor(Math.random() * REEL_STRIPS[1].length),
-      Math.floor(Math.random() * REEL_STRIPS[2].length),
-    ]
-
-    if (evaluateBoard(candidate, bet).kind === 'CHERRY') {
-      return candidate
-    }
-  }
-
-  return [chooseSymbolIndex(0, 'CHERRY'), 3, 9]
-}
-
-function buildTargetForResult(kind: HitKind, bet: number): [number, number, number] {
-  const rowOffset = pickOne(ACTIVE_LINE_ROWS[bet])
-
-  switch (kind) {
-    case 'BIG':
-      return buildLineTarget('7', rowOffset)
-    case 'REG':
-      return buildLineTarget('BAR', rowOffset)
-    case 'BELL':
-      return buildLineTarget('BELL', rowOffset)
-    case 'PLUM':
-      return buildLineTarget('PLUM', rowOffset)
-    case 'MELON':
-      return buildLineTarget('MELON', rowOffset)
-    case 'REPLAY':
-      return buildLineTarget('REPLAY', rowOffset)
-    case 'CHERRY':
-      return buildCherryTarget(bet)
-    default:
-      return buildMissTarget(bet)
-  }
-}
-
-function rollHitKind(): HitKind {
-  const roll = Math.random()
-
-  if (roll < 0.0018) {
-    return 'BIG'
-  }
-
-  if (roll < 0.0033) {
-    return 'REG'
-  }
-
-  if (roll < 0.0433) {
-    return 'BELL'
-  }
-
-  if (roll < 0.0633) {
-    return 'PLUM'
-  }
-
-  if (roll < 0.0713) {
-    return 'MELON'
-  }
-
-  if (roll < 0.1813) {
-    return 'REPLAY'
-  }
-
-  if (roll < 0.2213) {
-    return 'CHERRY'
-  }
-
-  return 'MISS'
 }
 
 function ControlButton({
@@ -631,13 +365,31 @@ function ReelDrum({ reelIndex, reelX, reel, stopEnabled, onStop }: ReelDrumProps
 
 export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
   const spinBetRef = useRef(0)
+  const pendingSpinSettlementRef = useRef(false)
   const [reels, setReels] = useState<ReelState[]>(() => createInitialReels())
   const [credits, setCredits] = useState(START_CREDITS)
   const [bet, setBet] = useState(0)
   const [message, setMessage] = useState('INSERT MEDAL')
   const [lastOutcome, setLastOutcome] = useState<Outcome>(MISS_OUTCOME)
+  const [bonusFlag, setBonusFlag] = useState<BonusFlag | null>(null)
+  const [spinHitKind, setSpinHitKind] = useState<HitKind | null>(null)
+  const [debugDrawKind, setDebugDrawKind] = useState<HitKind | null>(null)
+  const [debugConfirmedKind, setDebugConfirmedKind] = useState<HitKind | null>(null)
+  const [debugSpinBet, setDebugSpinBet] = useState(0)
   const isSpinning = reels.some((reel) => reel.isSpinning)
-  const activeRows = ACTIVE_LINE_ROWS[bet]
+  const spinBet = resolveSpinBet(bet, lastOutcome)
+  const activePaylines = getActivePaylines(bet)
+  const activePaylineIds = new Set(activePaylines.map((payline) => payline.id))
+  const displayedPaylines = ALL_PAYLINES.filter((payline) => {
+    return activePaylineIds.has(payline.id) || isHorizontalPayline(payline)
+  })
+  const activeOutcome = spinHitKind === null ? lastOutcome : MISS_OUTCOME
+  const panelTitle = bonusFlag === 'BIG' ? 'BIG BONUS' : bonusFlag === 'REG' ? 'REG BONUS' : lastOutcome.title
+  const panelColor = bonusFlag === 'BIG' ? '#fbbf24' : bonusFlag === 'REG' ? '#f472b6' : lastOutcome.color
+  const debugActiveLines = getActivePaylines(debugSpinBet)
+  const debugDrawLabel = `抽選役 ${debugDrawKind ?? '---'}`
+  const debugConfirmedLabel = `確定役 ${debugConfirmedKind ?? '---'}`
+  const debugPaylineLabel = `有効ライン ${debugActiveLines.length === 0 ? '---' : debugActiveLines.map((payline) => PAYLINE_DEBUG_LABELS[payline.id]).join('/')}`
 
   const insertMedal = () => {
     if (isSpinning) {
@@ -688,23 +440,30 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
       return
     }
 
-    if (bet === 0) {
+    if (spinBet === 0) {
       setMessage('BET 1-3')
       return
     }
 
-    const resultKind = rollHitKind()
-    const targets = buildTargetForResult(resultKind, bet)
+    const resultKind = rollLeverHitKind(bonusFlag !== null)
 
-    spinBetRef.current = bet
+    if (resultKind === 'BIG' || resultKind === 'REG') {
+      setBonusFlag(resultKind)
+    }
+
+    spinBetRef.current = spinBet
     setCredits((current) => current - bet)
     setBet(0)
-    setLastOutcome(MISS_OUTCOME)
+    setSpinHitKind(resultKind)
+    setDebugDrawKind(resultKind)
+    setDebugConfirmedKind(null)
+    setDebugSpinBet(spinBet)
+    pendingSpinSettlementRef.current = true
     setMessage('LEVER ON / TOUCH WINDOWS')
     setReels((current) => {
       return current.map((reel, reelIndex) => ({
         position: reel.position,
-        targetIndex: targets[reelIndex],
+        targetIndex: wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length),
         stopAt: null,
         isSpinning: true,
       }))
@@ -712,21 +471,41 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
   }
 
   const stopReel = (reelIndex: number) => {
-    if (!isSpinning) {
+    if (!isSpinning || spinHitKind === null) {
       return
     }
 
     setReels((current) => {
+      const lockedCenterIndices = current.map((reel, index) => {
+        if (index === reelIndex || (reel.isSpinning && reel.stopAt === null)) {
+          return null
+        }
+
+        return wrapIndex(
+          reel.stopAt === null ? Math.round(reel.position) : reel.targetIndex,
+          REEL_STRIPS[index].length,
+        )
+      }) as [number | null, number | null, number | null]
+
       return current.map((reel, index) => {
         if (index !== reelIndex || !reel.isSpinning || reel.stopAt !== null) {
           return reel
         }
 
         const stripLength = REEL_STRIPS[index].length
+        const resolution = resolveStopIndex({
+          reelIndex: index,
+          currentPosition: reel.position,
+          lockedCenterIndices,
+          bet: spinBetRef.current,
+          pendingKind: spinHitKind,
+          bonusFlag,
+        })
         const extraTravel = 6 + index * 1.4
         return {
           ...reel,
-          stopAt: reel.position + extraTravel + wrapDistance(reel.position, reel.targetIndex, stripLength),
+          targetIndex: resolution.stopIndex,
+          stopAt: reel.position + extraTravel + wrapDistance(reel.position, resolution.stopIndex, stripLength),
         }
       })
     })
@@ -742,8 +521,6 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
     if (!isSpinning) {
       return
     }
-
-    let finishedIndices: [number, number, number] | null = null
 
     setReels((current) => {
       const next = current.map((reel) => {
@@ -779,7 +556,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
       const allStopped = next.every((reel) => !reel.isSpinning)
       if (allStopped) {
-        finishedIndices = next.map((reel, reelIndex) => {
+        const finishedIndices = next.map((reel, reelIndex) => {
           return wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length)
         }) as [number, number, number]
 
@@ -793,17 +570,29 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
       return next
     })
-
-    if (finishedIndices) {
-      const outcome = evaluateBoard(finishedIndices, spinBetRef.current)
-      const returnedCredits = outcome.payout
-
-      setCredits((current) => Math.min(999, current + returnedCredits))
-      setLastOutcome(outcome)
-      setMessage(outcome.detail)
-      spinBetRef.current = 0
-    }
   })
+
+  useEffect(() => {
+    if (pendingSpinSettlementRef.current === false || isSpinning || spinHitKind === null) {
+      return
+    }
+
+    pendingSpinSettlementRef.current = false
+
+    const finishedIndices = reels.map((reel, reelIndex) => {
+      return wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length)
+    }) as [number, number, number]
+    const outcome = evaluateBoard(finishedIndices, spinBetRef.current)
+    const returnedCredits = outcome.payout
+
+    setCredits((current) => Math.min(999, current + returnedCredits))
+    setLastOutcome(outcome)
+    setDebugConfirmedKind(outcome.kind)
+    setBonusFlag((currentBonusFlag) => resolveBonusFlag(currentBonusFlag, outcome.kind))
+    setSpinHitKind(null)
+    setMessage(outcome.detail)
+    spinBetRef.current = 0
+  }, [isSpinning, reels, spinHitKind])
 
   return (
     <group position={position} scale={scale * ITEM_MODEL_SCALE}>
@@ -829,8 +618,8 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             <boxGeometry args={[3.4, 0.68, 0.06]} />
             <meshStandardMaterial
               color="#4f463f"
-              emissive={lastOutcome.kind === 'MISS' ? '#16110f' : lastOutcome.color}
-              emissiveIntensity={isSpinning ? 0.78 : lastOutcome.kind === 'MISS' ? 0.15 : 0.42}
+              emissive={activeOutcome.kind === 'MISS' ? '#16110f' : activeOutcome.color}
+              emissiveIntensity={isSpinning ? 0.78 : activeOutcome.kind === 'MISS' ? 0.15 : 0.42}
               metalness={0.25}
               roughness={0.18}
             />
@@ -852,8 +641,8 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           </mesh>
 
           {[
-            { label: 'BIG', x: -1.08, active: lastOutcome.kind === 'BIG', color: '#fbbf24' },
-            { label: 'REG', x: 0, active: lastOutcome.kind === 'REG', color: '#f472b6' },
+            { label: 'BIG', x: -1.08, active: bonusFlag === 'BIG', color: '#fbbf24' },
+            { label: 'REG', x: 0, active: bonusFlag === 'REG', color: '#f472b6' },
             { label: 'SPIN', x: 1.08, active: isSpinning, color: '#67e8f9' },
           ].map((lamp) => (
             <group key={lamp.label} position={[lamp.x, 3.9, 1.14]}>
@@ -886,11 +675,13 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             <meshStandardMaterial color="#69615f" emissive="#1f1717" emissiveIntensity={0.18} metalness={0.75} roughness={0.18} />
           </mesh>
 
-          {[-1, 0, 1].map((rowOffset) => {
-            const active = activeRows.includes(rowOffset)
+          {displayedPaylines.map((payline) => {
+            const active = activePaylineIds.has(payline.id)
+            const { length, position: paylinePosition, rotation } = paylineMeshTransform(payline)
+
             return (
-              <mesh key={rowOffset} position={[0, lineY(rowOffset), 1.19]}>
-                <boxGeometry args={[2.56, 0.03, 0.03]} />
+              <mesh key={payline.id} position={paylinePosition} rotation={rotation}>
+                <boxGeometry args={[length, PAYLINE_DISPLAY_THICKNESS, PAYLINE_DISPLAY_THICKNESS]} />
                 <meshStandardMaterial
                   color={active ? '#fb7185' : '#35252b'}
                   emissive={active ? '#fb7185' : '#000000'}
@@ -943,7 +734,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             position={[-1.99, 2.32, 1.19]}
             textAlign="left"
           >
-            {'BIG 711\nREG 104\nBELL 15\nPLUM 10\nMELON 8\nCHERRY 2\nRPLY xBET'}
+            {'BIG 711\nREG 104\nBELL 15\nPLUM 10\nCHERRY 2\nRPLY xBET'}
           </Text>
 
           <Text anchorX="left" anchorY="middle" color="#f8f1de" fontSize={0.105} position={[-1.98, 3.26, 1.19]}>
@@ -956,13 +747,16 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             {`PAYOUT ${lastOutcome.payout}`}
           </Text>
 
-          <Text anchorX="center" anchorY="middle" color={lastOutcome.color} fontSize={0.12} position={[1.67, 3.02, 1.19]}>
-            {lastOutcome.title}
+          <Text anchorX="center" anchorY="middle" color={panelColor} fontSize={0.12} position={[1.67, 3.02, 1.19]}>
+            {panelTitle}
+          </Text>
+          <Text anchorX="center" anchorY="top" color="#f8f1de" fontSize={0.05} maxWidth={1.2} position={[1.67, 2.83, 1.19]} textAlign="center">
+            {`${debugDrawLabel}\n${debugConfirmedLabel}\n${debugPaylineLabel}`}
           </Text>
           <Text
             anchorX="center"
             anchorY="middle"
-            color={isSpinning ? '#67e8f9' : lastOutcome.color}
+            color={spinHitKind === null ? lastOutcome.color : '#67e8f9'}
             fontSize={0.095}
             maxWidth={1.7}
             position={[0, 1.74, 1.19]}
@@ -974,14 +768,14 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           <ControlButton color="#3b82f6" enabled={!isSpinning} label="MEDAL" onPress={insertMedal} position={[-1.35, 0.98, 1.23]} />
           <ControlButton color="#ef4444" enabled={!isSpinning && bet < 3 && credits > bet} label="BET 1" onPress={betOne} position={[-0.45, 0.98, 1.23]} />
           <ControlButton color="#f59e0b" enabled={!isSpinning && credits > 0} label="MAX" onPress={maxBet} position={[0.45, 0.98, 1.23]} />
-          <ControlButton color="#22c55e" enabled={!isSpinning && bet > 0} label="LEVER" onPress={startSpin} position={[1.35, 1.12, 1.23]} size={[0.62, 0.3, 0.36]} />
+          <ControlButton color="#22c55e" enabled={!isSpinning && spinBet > 0} label="LEVER" onPress={startSpin} position={[1.35, 1.12, 1.23]} size={[0.62, 0.3, 0.36]} />
 
           <mesh castShadow receiveShadow position={[0, 0.08, 0]}>
             <boxGeometry args={[4.8, 0.16, 2.5]} />
             <meshStandardMaterial color="#2a1f1f" metalness={0.35} roughness={0.55} />
           </mesh>
 
-          <pointLight color={lastOutcome.color} distance={4.5} intensity={isSpinning ? 1.8 : lastOutcome.kind === 'MISS' ? 0.45 : 1.25} position={[0, 4.2, 0.9]} />
+          <pointLight color={activeOutcome.color} distance={4.5} intensity={isSpinning ? 1.8 : activeOutcome.kind === 'MISS' ? 0.45 : 1.25} position={[0, 4.2, 0.9]} />
         </group>
       </RigidBody>
     </group>
