@@ -1,4 +1,4 @@
-export type LeverHitKind = 'BIG' | 'REG' | 'BELL' | 'PLUM' | 'REPLAY' | 'CHERRY' | 'MISS'
+export type LeverHitKind = 'BIG' | 'REG' | 'BELL' | 'REPLAY' | 'CHERRY' | 'MISS'
 
 export const LEVER_LOTTERY_DENOMINATOR = 960
 
@@ -8,7 +8,6 @@ const LEVER_HIT_RANGES: Array<{
 }> = [
   { upperExclusive: 120, kind: 'REPLAY' },
   { upperExclusive: 195, kind: 'CHERRY' },
-  { upperExclusive: 270, kind: 'PLUM' },
   { upperExclusive: 315, kind: 'BELL' },
   { upperExclusive: 319, kind: 'BIG' },
   { upperExclusive: 331, kind: 'REG' },

@@ -7,8 +7,6 @@ import { rollLeverHitKind } from './leverLottery'
 import { ALL_PAYLINES, getActivePaylines, isHorizontalPayline, type PaylineDefinition } from './paylines'
 import {
   MISS_OUTCOME,
-  REEL_STRIPS,
-  REEL_SYMBOLS_PER_STRIP,
   evaluateBoard,
   resolveSpinBet,
   resolveBonusFlag,
@@ -16,9 +14,9 @@ import {
   type BonusFlag,
   type HitKind,
   type Outcome,
-  type ReelSymbol,
   wrapIndex,
 } from './slotLogic'
+import { REEL_STRIPS, REEL_SYMBOLS_PER_STRIP, type ReelSymbol } from './reelStrips'
 
 export interface ItemProps {
   position?: [number, number, number]
@@ -76,23 +74,23 @@ const PAYLINE_DISPLAY_WIDTH = 2.56
 const PAYLINE_DISPLAY_THICKNESS = 0.03
 const PAYLINE_DISPLAY_Z = 1.19
 const SYMBOL_LABELS: Record<ReelSymbol, string> = {
-  '7': '7',
+  RED_7: '7',
+  BLUE_7: 'V',
   BAR: 'BAR',
   BELL: 'BELL',
   CHERRY: 'CHRY',
   REPLAY: 'RPLY',
   MELON: 'MLON',
-  PLUM: 'PLUM',
 }
 
 const SYMBOL_COLORS: Record<ReelSymbol, string> = {
-  '7': '#ef4444',
+  RED_7: '#ef4444',
+  BLUE_7: '#052efa',
   BAR: '#111827',
   BELL: '#facc15',
   CHERRY: '#fb7185',
-  REPLAY: '#60a5fa',
+  REPLAY: '#9ac8ff',
   MELON: '#34d399',
-  PLUM: '#c084fc',
 }
 
 const PAYLINE_DEBUG_LABELS = {
@@ -250,7 +248,7 @@ function ReelSymbolCard({ symbol }: ReelSymbolCardProps) {
   const faceColor = symbol === 'BAR' ? '#111827' : SYMBOL_COLORS[symbol]
   const textColor = symbol === 'BAR' ? '#fff8ea' : '#111111'
   const outlineColor = symbol === 'BAR' ? '#241718' : '#fff8ea'
-  const fontSize = symbol === '7' ? 0.21 : symbol.length > 4 ? 0.135 : 0.16
+  const fontSize = label.length > 4 ? 0.135 : label.length > 2 ? 0.16 : 0.21
 
   return (
     <group>
@@ -734,7 +732,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             position={[-1.99, 2.32, 1.19]}
             textAlign="left"
           >
-            {'BIG 711\nREG 104\nBELL 15\nPLUM 10\nCHERRY 2\nRPLY xBET'}
+            {'BIG 711\nREG 104\nMELON 15\nBELL 8\nCHERRY 2\nRPLY xBET'}
           </Text>
 
           <Text anchorX="left" anchorY="middle" color="#f8f1de" fontSize={0.105} position={[-1.98, 3.26, 1.19]}>

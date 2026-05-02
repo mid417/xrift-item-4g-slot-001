@@ -32,10 +32,10 @@ const ACTIVE_PAYLINE_IDS_BY_BET = {
 }
 
 const KIND_BY_SYMBOL = {
-  '7': 'BIG',
+  RED_7: 'BIG',
+  BLUE_7: 'BIG',
   BAR: 'REG',
   BELL: 'BELL',
-  PLUM: 'PLUM',
   MELON: 'MELON',
   REPLAY: 'REPLAY',
 }
@@ -43,9 +43,8 @@ const KIND_BY_SYMBOL = {
 const PAYOUT_BY_KIND = {
   BIG: 711,
   REG: 104,
-  BELL: 15,
-  PLUM: 10,
-  MELON: 8,
+  BELL: 8,
+  MELON: 15,
 }
 
 function readTestPayline(visibleBoard, paylineId) {
@@ -78,11 +77,24 @@ function hasOnlyTargetWin(visibleBoard, bet, targetPaylineId, targetSymbol) {
     return false
   }
 
-  if (targetSymbol === '7' || targetSymbol === 'BAR') {
-    return true
+  return !visibleBoard[0].includes('CHERRY')
+}
+
+function collectVisibleKinds(visibleBoard, bet) {
+  const kinds = []
+
+  for (const paylineId of ACTIVE_PAYLINE_IDS_BY_BET[bet]) {
+    const winningSymbol = uniformWinningSymbol(readTestPayline(visibleBoard, paylineId))
+    if (winningSymbol) {
+      kinds.push(KIND_BY_SYMBOL[winningSymbol])
+    }
   }
 
-  return !visibleBoard[0].includes('CHERRY')
+  if (visibleBoard[0].includes('CHERRY')) {
+    kinds.push('CHERRY')
+  }
+
+  return kinds
 }
 
 function findCenterIndicesForWin(targetPaylineId, targetSymbol, bet) {
@@ -108,12 +120,47 @@ function findCenterIndicesForWin(targetPaylineId, targetSymbol, bet) {
   return null
 }
 
+function findCenterIndicesForMixedBig(targetPaylineId, bet) {
+  for (let reel0 = 0; reel0 < REEL_STRIPS[0].length; reel0 += 1) {
+    for (let reel1 = 0; reel1 < REEL_STRIPS[1].length; reel1 += 1) {
+      for (let reel2 = 0; reel2 < REEL_STRIPS[2].length; reel2 += 1) {
+        const centerIndices = [reel0, reel1, reel2]
+        const visibleBoard = visibleBoardFromCenterIndices(centerIndices)
+        const lineSymbols = readTestPayline(visibleBoard, targetPaylineId)
+
+        if (!lineSymbols.every((symbol) => symbol === 'RED_7' || symbol === 'BLUE_7')) {
+          continue
+        }
+
+        if (lineSymbols.every((symbol) => symbol === lineSymbols[0])) {
+          continue
+        }
+
+        if (collectVisibleKinds(visibleBoard, bet).length > 0) {
+          continue
+        }
+
+        return { centerIndices, visibleBoard }
+      }
+    }
+  }
+
+  return null
+}
+
 test('visibleBoardFromCenterIndices matches the reel display order for top and bottom rows', () => {
   const visibleBoard = visibleBoardFromCenterIndices([0, 0, 0])
 
   assert.equal(visibleBoard[0][0], REEL_STRIPS[0][1])
   assert.equal(visibleBoard[0][1], REEL_STRIPS[0][0])
   assert.equal(visibleBoard[0][2], REEL_STRIPS[0][REEL_STRIPS[0].length - 1])
+})
+
+test('REEL_STRIPS keeps 21 symbols per reel and removes PLUM entirely', () => {
+  for (const strip of REEL_STRIPS) {
+    assert.equal(strip.length, 21)
+    assert.equal(strip.includes('PLUM'), false)
+  }
 })
 
 const ACTIVE_PAYLINE_CASES = [
@@ -124,25 +171,34 @@ const ACTIVE_PAYLINE_CASES = [
   { paylineId: 'diagonalUp', bet: 3 },
 ]
 
-for (const [symbol, expectedKind] of Object.entries(KIND_BY_SYMBOL)) {
-  for (const { paylineId, bet } of ACTIVE_PAYLINE_CASES) {
-    test(`${expectedKind} is evaluated on the ${paylineId} payline at bet ${bet}`, () => {
-      const candidate = findCenterIndicesForWin(paylineId, symbol, bet)
-
-      assert.ok(candidate, `No board found for ${expectedKind} on ${paylineId} at bet ${bet}`)
-
-      const outcome = evaluateBoard(candidate.centerIndices, bet)
-
-      assert.equal(outcome.kind, expectedKind)
-
-      if (expectedKind === 'REPLAY') {
-        assert.equal(outcome.payout, bet)
-        return
-      }
-
-      assert.equal(outcome.payout, PAYOUT_BY_KIND[expectedKind])
-    })
+function findAnyActiveWin(targetSymbol) {
+  for (const activeCase of ACTIVE_PAYLINE_CASES) {
+    const candidate = findCenterIndicesForWin(activeCase.paylineId, targetSymbol, activeCase.bet)
+    if (candidate) {
+      return { ...candidate, ...activeCase }
+    }
   }
+
+  return null
+}
+
+for (const [symbol, expectedKind] of Object.entries(KIND_BY_SYMBOL)) {
+  test(`${symbol} is evaluated as ${expectedKind} on at least one active payline`, () => {
+    const candidate = findAnyActiveWin(symbol)
+
+    assert.ok(candidate, `No board found for ${symbol} on an active payline`)
+
+    const outcome = evaluateBoard(candidate.centerIndices, candidate.bet)
+
+    assert.equal(outcome.kind, expectedKind)
+
+    if (expectedKind === 'REPLAY') {
+      assert.equal(outcome.payout, candidate.bet)
+      return
+    }
+
+    assert.equal(outcome.payout, PAYOUT_BY_KIND[expectedKind])
+  })
 }
 
 const INACTIVE_PAYLINE_CASES = [
@@ -165,6 +221,13 @@ for (const { paylineId, activeBet, inactiveBet } of INACTIVE_PAYLINE_CASES) {
   })
 }
 
+test('mixed RED_7 and BLUE_7 does not evaluate as BIG', () => {
+  const candidate = findCenterIndicesForMixedBig('center', 1)
+
+  assert.ok(candidate, 'No mixed BIG board found on the center payline at bet 1')
+  assert.equal(evaluateBoard(candidate.centerIndices, 1).kind, 'MISS')
+})
+
 test('resolveSpinBet reuses the replay payout when the next game starts without a bet', () => {
   assert.equal(resolveSpinBet(0, { kind: 'REPLAY', payout: 3 }), 3)
   assert.equal(resolveSpinBet(2, { kind: 'REPLAY', payout: 3 }), 2)
@@ -175,7 +238,7 @@ test('getReachableStopIndices wraps across the strip boundary', () => {
   assert.deepEqual(getReachableStopIndices(0, 19.2), [20, 0, 1, 2, 3])
 })
 
-test('resolveStopIndex chooses the nearest matching symbol within four steps on the first stop', () => {
+test('resolveStopIndex keeps a clean first-stop BIG candidate in range', () => {
   const resolution = resolveStopIndex({
     reelIndex: 0,
     currentPosition: 11.4,
@@ -185,11 +248,11 @@ test('resolveStopIndex chooses the nearest matching symbol within four steps on 
     bonusFlag: null,
   })
 
-  assert.equal(resolution.stopIndex, 14)
+  assert.equal(resolution.stopIndex, 16)
   assert.equal(resolution.resolvedKind, 'BIG')
 })
 
-test('resolveStopIndex keeps a bonus line alive on a later stop', () => {
+test('resolveStopIndex drops a later-stop BIG candidate when the current line cannot stay clean', () => {
   const resolution = resolveStopIndex({
     reelIndex: 1,
     currentPosition: 6.2,
@@ -199,11 +262,11 @@ test('resolveStopIndex keeps a bonus line alive on a later stop', () => {
     bonusFlag: null,
   })
 
-  assert.equal(resolution.stopIndex, 10)
-  assert.equal(resolution.resolvedKind, 'BIG')
+  assert.equal(resolution.stopIndex, 7)
+  assert.equal(resolution.resolvedKind, 'MISS')
 })
 
-test('resolveStopIndex can steer to the active bonus flag while the lever result is MISS', () => {
+test('resolveStopIndex can steer to a clean BIG bonus flag', () => {
   const resolution = resolveStopIndex({
     reelIndex: 0,
     currentPosition: 11.4,
@@ -213,27 +276,62 @@ test('resolveStopIndex can steer to the active bonus flag while the lever result
     bonusFlag: 'BIG',
   })
 
-  assert.equal(resolution.stopIndex, 14)
+  assert.equal(resolution.stopIndex, 16)
   assert.equal(resolution.resolvedKind, 'BIG')
 })
 
-test('resolveStopIndex falls back to MISS when the pending symbol is out of the pull range', () => {
+test('resolveStopIndex falls back to MISS when no clean BIG is reachable', () => {
   const resolution = resolveStopIndex({
     reelIndex: 0,
-    currentPosition: 15.2,
+    currentPosition: 0,
     lockedCenterIndices: [null, null, null],
     bet: 1,
     pendingKind: 'BIG',
     bonusFlag: null,
   })
 
-  assert.equal(resolution.stopIndex, 16)
+  assert.equal(resolution.stopIndex, 0)
   assert.equal(resolution.resolvedKind, 'MISS')
+})
+
+test('resolveStopIndex slides the left reel past CHERRY when that would make another BELL look duplicated', () => {
+  const resolution = resolveStopIndex({
+    reelIndex: 0,
+    currentPosition: 2,
+    lockedCenterIndices: [null, null, null],
+    bet: 2,
+    pendingKind: 'BELL',
+    bonusFlag: null,
+  })
+
+  assert.equal(resolution.stopIndex, 6)
+  assert.equal(resolution.resolvedKind, 'BELL')
+  assert.equal(visibleBoardFromCenterIndices([resolution.stopIndex, 0, 0])[0].includes('CHERRY'), false)
+})
+
+test('resolveStopIndex drops the final reel to MISS when the reachable BELL would also show another hit', () => {
+  const dirtyBoard = visibleBoardFromCenterIndices([6, 5, 10])
+  const dirtyKinds = collectVisibleKinds(dirtyBoard, 2)
+  assert.ok(dirtyKinds.includes('BELL'))
+  assert.ok(dirtyKinds.some((kind) => kind !== 'BELL'))
+
+  const resolution = resolveStopIndex({
+    reelIndex: 2,
+    currentPosition: 7,
+    lockedCenterIndices: [6, 5, null],
+    bet: 2,
+    pendingKind: 'BELL',
+    bonusFlag: null,
+  })
+
+  assert.equal(resolution.stopIndex, 7)
+  assert.equal(resolution.resolvedKind, 'MISS')
+  assert.equal(evaluateBoard([6, 5, resolution.stopIndex], 2).kind, 'MISS')
 })
 
 test('resolveBonusFlag only clears after a bonus is actually aligned', () => {
   assert.equal(resolveBonusFlag('BIG', 'MISS'), 'BIG')
-  assert.equal(resolveBonusFlag('REG', 'PLUM'), 'REG')
+  assert.equal(resolveBonusFlag('REG', 'BELL'), 'REG')
   assert.equal(resolveBonusFlag('BIG', 'BIG'), null)
   assert.equal(resolveBonusFlag('REG', 'REG'), null)
 })

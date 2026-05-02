@@ -1,9 +1,14 @@
 import { getActivePaylines, readPayline } from './paylines'
 import type { VisibleBoard } from './paylines'
 
-export type ReelSymbol = '7' | 'BAR' | 'BELL' | 'CHERRY' | 'REPLAY' | 'MELON' | 'PLUM'
-export type HitKind = 'BIG' | 'REG' | 'BELL' | 'PLUM' | 'MELON' | 'REPLAY' | 'CHERRY' | 'MISS'
+import { REEL_STRIPS, REEL_SYMBOLS_PER_STRIP, type ReelSymbol } from './reelStrips'
+
+export { REEL_STRIPS, REEL_SYMBOLS_PER_STRIP } from './reelStrips'
+export type { ReelSymbol } from './reelStrips'
+
+export type HitKind = 'BIG' | 'REG' | 'BELL' | 'MELON' | 'REPLAY' | 'CHERRY' | 'MISS'
 export type BonusFlag = Extract<HitKind, 'BIG' | 'REG'>
+type LineHitKind = Exclude<HitKind, 'CHERRY' | 'MISS'>
 
 export interface Outcome {
   kind: HitKind
@@ -15,80 +20,6 @@ export interface Outcome {
 
 export type CenterIndices = [number, number, number]
 export type PartialCenterIndices = [number | null, number | null, number | null]
-
-export const REEL_SYMBOLS_PER_STRIP = 21
-
-export const REEL_STRIPS = [
-  [
-    'BELL',
-    'PLUM',
-    '7',
-    'CHERRY',
-    'REPLAY',
-    'MELON',
-    'BELL',
-    'PLUM',
-    'BAR',
-    'REPLAY',
-    'BELL',
-    'MELON',
-    'PLUM',
-    'CHERRY',
-    '7',
-    'BELL',
-    'REPLAY',
-    'BAR',
-    'PLUM',
-    'MELON',
-    'BELL',
-  ],
-  [
-    'PLUM',
-    'BELL',
-    'REPLAY',
-    '7',
-    'MELON',
-    'BAR',
-    'PLUM',
-    'BELL',
-    'REPLAY',
-    'MELON',
-    '7',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'MELON',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'PLUM',
-  ],
-  [
-    'REPLAY',
-    'BELL',
-    'PLUM',
-    'MELON',
-    '7',
-    'BAR',
-    'REPLAY',
-    'PLUM',
-    'BELL',
-    'MELON',
-    'BAR',
-    'PLUM',
-    'REPLAY',
-    'BELL',
-    '7',
-    'MELON',
-    'PLUM',
-    'BELL',
-    'BAR',
-    'REPLAY',
-    'REPLAY',
-  ],
-] satisfies readonly [readonly ReelSymbol[], readonly ReelSymbol[], readonly ReelSymbol[]]
 
 export const MISS_OUTCOME: Outcome = {
   kind: 'MISS',
@@ -172,59 +103,9 @@ export function evaluateBoard(centerIndices: CenterIndices, bet: number): Outcom
 
   for (const payline of getActivePaylines(bet)) {
     const lineSymbols = readPayline(visibleBoard, payline)
-
-    if (lineSymbols.every((symbol) => symbol === '7')) {
-      return {
-        kind: 'BIG',
-        payout: 711,
-        title: 'BIG BONUS',
-        detail: 'BIG BONUS 711',
-        color: '#fbbf24',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'BAR')) {
-      return {
-        kind: 'REG',
-        payout: 104,
-        title: 'REG BONUS',
-        detail: 'REG BONUS 104',
-        color: '#f472b6',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'BELL')) {
-      return {
-        kind: 'BELL',
-        payout: 15,
-        title: 'BELL',
-        detail: 'BELL 15',
-        color: '#fde047',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'PLUM')) {
-      return {
-        kind: 'PLUM',
-        payout: 10,
-        title: 'PLUM',
-        detail: 'PLUM 10',
-        color: '#d8b4fe',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'MELON')) {
-      return {
-        kind: 'MELON',
-        payout: 8,
-        title: 'MELON',
-        detail: 'MELON 8',
-        color: '#6ee7b7',
-      }
-    }
-
-    if (lineSymbols.every((symbol) => symbol === 'REPLAY')) {
-      return createReplayOutcome(bet)
+    const paylineKind = resolvePaylineKind(lineSymbols)
+    if (paylineKind !== null) {
+      return createOutcome(paylineKind, bet)
     }
   }
 
@@ -332,7 +213,7 @@ function canResolveOutcome(centerIndices: PartialCenterIndices, desiredKind: Hit
           continue
         }
 
-        if (evaluateBoard([reel0, reel1, reel2], bet).kind === desiredKind) {
+        if (isCleanOutcome([reel0, reel1, reel2], desiredKind, bet)) {
           return true
         }
       }
@@ -340,4 +221,93 @@ function canResolveOutcome(centerIndices: PartialCenterIndices, desiredKind: Hit
   }
 
   return false
+}
+
+function createOutcome(kind: LineHitKind, bet: number): Outcome {
+  switch (kind) {
+    case 'BIG':
+      return {
+        kind,
+        payout: 711,
+        title: 'BIG BONUS',
+        detail: 'BIG BONUS 711',
+        color: '#fbbf24',
+      }
+    case 'REG':
+      return {
+        kind,
+        payout: 104,
+        title: 'REG BONUS',
+        detail: 'REG BONUS 104',
+        color: '#f472b6',
+      }
+    case 'BELL':
+      return {
+        kind,
+        payout: 8,
+        title: 'BELL',
+        detail: 'BELL 8',
+        color: '#fde047',
+      }
+    case 'MELON':
+      return {
+        kind,
+        payout: 15,
+        title: 'MELON',
+        detail: 'MELON 15',
+        color: '#6ee7b7',
+      }
+    case 'REPLAY':
+      return createReplayOutcome(bet)
+  }
+}
+
+function resolvePaylineKind(lineSymbols: readonly ReelSymbol[]): LineHitKind | null {
+  if (!lineSymbols.every((symbol) => symbol === lineSymbols[0])) {
+    return null
+  }
+
+  switch (lineSymbols[0]) {
+    case 'RED_7':
+    case 'BLUE_7':
+      return 'BIG'
+    case 'BAR':
+      return 'REG'
+    case 'BELL':
+      return 'BELL'
+    case 'MELON':
+      return 'MELON'
+    case 'REPLAY':
+      return 'REPLAY'
+    default:
+      return null
+  }
+}
+
+function collectVisibleKinds(centerIndices: CenterIndices, bet: number): HitKind[] {
+  const visibleBoard = visibleBoardFromCenterIndices(centerIndices)
+  const kinds: HitKind[] = []
+
+  for (const payline of getActivePaylines(bet)) {
+    const paylineKind = resolvePaylineKind(readPayline(visibleBoard, payline))
+    if (paylineKind !== null) {
+      kinds.push(paylineKind)
+    }
+  }
+
+  if (visibleBoard[0].includes('CHERRY')) {
+    kinds.push('CHERRY')
+  }
+
+  return kinds
+}
+
+function isCleanOutcome(centerIndices: CenterIndices, desiredKind: HitKind, bet: number): boolean {
+  const visibleKinds = collectVisibleKinds(centerIndices, bet)
+
+  if (desiredKind === 'MISS') {
+    return visibleKinds.length === 0
+  }
+
+  return visibleKinds.includes(desiredKind) && visibleKinds.every((kind) => kind === desiredKind)
 }
