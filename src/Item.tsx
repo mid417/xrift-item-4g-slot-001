@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Text } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody } from '@react-three/rapier'
-import { DoubleSide, Shape } from 'three'
+import { DoubleSide, Shape, type Group } from 'three'
+import { advanceReelAnimation } from './itemAnimation'
 import { rollLeverHitKind } from './leverLottery'
 import { ALL_PAYLINES, getActivePaylines, isHorizontalPayline, type PaylineDefinition } from './paylines'
 import {
@@ -147,6 +148,56 @@ function createRoundedRectShape(x: number, y: number, width: number, height: num
   return shape
 }
 
+const ACTIVE_PAYLINES_BY_BET = [0, 1, 2, 3].map((currentBet) => getActivePaylines(currentBet))
+const ACTIVE_PAYLINE_ID_SETS_BY_BET = ACTIVE_PAYLINES_BY_BET.map((paylines) => new Set(paylines.map((payline) => payline.id)))
+const DISPLAYED_PAYLINES_BY_BET = ACTIVE_PAYLINE_ID_SETS_BY_BET.map((paylineIds) => {
+  return ALL_PAYLINES.filter((payline) => paylineIds.has(payline.id) || isHorizontalPayline(payline))
+})
+const PAYLINE_MESH_TRANSFORMS = new Map(ALL_PAYLINES.map((payline) => [payline.id, paylineMeshTransform(payline)]))
+const REEL_BEZELS = [
+  {
+    key: 'top',
+    position: [0, (REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER) / 2, REEL_PANEL_Z - REEL_BEZEL_DEPTH / 2] as [number, number, number],
+    size: [REEL_BEZEL_WIDTH, REEL_BEZEL_BORDER, REEL_BEZEL_DEPTH] as [number, number, number],
+  },
+  {
+    key: 'bottom',
+    position: [0, -(REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER) / 2, REEL_PANEL_Z - REEL_BEZEL_DEPTH / 2] as [number, number, number],
+    size: [REEL_BEZEL_WIDTH, REEL_BEZEL_BORDER, REEL_BEZEL_DEPTH] as [number, number, number],
+  },
+  {
+    key: 'left',
+    position: [-(REEL_BEZEL_WIDTH - REEL_BEZEL_BORDER) / 2, 0, REEL_PANEL_Z - REEL_BEZEL_DEPTH / 2] as [number, number, number],
+    size: [REEL_BEZEL_BORDER, REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER * 2, REEL_BEZEL_DEPTH] as [number, number, number],
+  },
+  {
+    key: 'right',
+    position: [(REEL_BEZEL_WIDTH - REEL_BEZEL_BORDER) / 2, 0, REEL_PANEL_Z - REEL_BEZEL_DEPTH / 2] as [number, number, number],
+    size: [REEL_BEZEL_BORDER, REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER * 2, REEL_BEZEL_DEPTH] as [number, number, number],
+  },
+] as const
+const STATUS_LAMPS = [
+  { label: 'BIG', x: -1.08, kind: 'BIG', color: '#fbbf24' },
+  { label: 'REG', x: 0, kind: 'REG', color: '#f472b6' },
+  { label: 'SPIN', x: 1.08, kind: 'SPIN', color: '#67e8f9' },
+] as const
+const DEFAULT_CONTROL_BUTTON_SIZE: [number, number, number] = [0.58, 0.18, 0.34]
+const CONTROL_BUTTON_LAYOUTS = {
+  medal: {
+    position: [-1.35, 0.98, 1.23] as [number, number, number],
+  },
+  betOne: {
+    position: [-0.45, 0.98, 1.23] as [number, number, number],
+  },
+  max: {
+    position: [0.45, 0.98, 1.23] as [number, number, number],
+  },
+  lever: {
+    position: [1.35, 1.12, 1.23] as [number, number, number],
+    size: [0.62, 0.3, 0.36] as [number, number, number],
+  },
+} as const
+
 const FRONT_PANEL_SHAPE = (() => {
   const shape = createRoundedRectShape(
     -REEL_PANEL_WIDTH / 2,
@@ -180,13 +231,13 @@ function createInitialReels(): ReelState[] {
   }))
 }
 
-function ControlButton({
+const ControlButton = memo(function ControlButton({
   label,
   position,
   color,
   enabled,
   onPress,
-  size = [0.58, 0.18, 0.34],
+  size = DEFAULT_CONTROL_BUTTON_SIZE,
 }: ControlButtonProps) {
   const [hovered, setHovered] = useState(false)
   const faceColor = enabled ? color : '#5a4a45'
@@ -236,14 +287,14 @@ function ControlButton({
       </Text>
     </group>
   )
-}
+})
 
 
 interface ReelSymbolCardProps {
   symbol: ReelSymbol
 }
 
-function ReelSymbolCard({ symbol }: ReelSymbolCardProps) {
+const ReelSymbolCard = memo(function ReelSymbolCard({ symbol }: ReelSymbolCardProps) {
   const label = SYMBOL_LABELS[symbol]
   const faceColor = symbol === 'BAR' ? '#111827' : SYMBOL_COLORS[symbol]
   const textColor = symbol === 'BAR' ? '#fff8ea' : '#111111'
@@ -287,54 +338,61 @@ function ReelSymbolCard({ symbol }: ReelSymbolCardProps) {
       </Text>
     </group>
   )
-}
+})
 
 interface ReelDrumProps {
   reelIndex: number
   reelX: number
-  reel: ReelState
+  reelsRef: MutableRefObject<ReelState[]>
   stopEnabled: boolean
   onStop: (reelIndex: number) => void
 }
 
-function ReelDrum({ reelIndex, reelX, reel, stopEnabled, onStop }: ReelDrumProps) {
+const ReelDrum = memo(function ReelDrum({ reelIndex, reelX, reelsRef, stopEnabled, onStop }: ReelDrumProps) {
   const strip = REEL_STRIPS[reelIndex]
-  const bezelZ = REEL_PANEL_Z - REEL_BEZEL_DEPTH / 2
+  const drumRef = useRef<Group>(null)
+  const handleStop = useCallback(() => {
+    onStop(reelIndex)
+  }, [onStop, reelIndex])
+  const symbolTransforms = useMemo(() => {
+    return strip.map((_symbol, symbolIndex) => {
+      const angle = symbolIndex * REEL_SYMBOL_ANGLE
+      return {
+        key: `${reelIndex}-${symbolIndex}`,
+        position: [0, Math.sin(angle) * REEL_RADIUS, Math.cos(angle) * REEL_RADIUS] as [number, number, number],
+        rotation: [-angle, 0, 0] as [number, number, number],
+      }
+    })
+  }, [reelIndex, strip])
+
+  useFrame(() => {
+    if (drumRef.current === null) {
+      return
+    }
+
+    drumRef.current.rotation.x = reelsRef.current[reelIndex].position * REEL_SYMBOL_ANGLE
+  })
 
   return (
     <group position={[reelX, WINDOW_CENTER_Y, 0]}>
-      {[
-        { key: 'top', position: [0, (REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER) / 2, bezelZ], size: [REEL_BEZEL_WIDTH, REEL_BEZEL_BORDER, REEL_BEZEL_DEPTH] },
-        { key: 'bottom', position: [0, -(REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER) / 2, bezelZ], size: [REEL_BEZEL_WIDTH, REEL_BEZEL_BORDER, REEL_BEZEL_DEPTH] },
-        {
-          key: 'left',
-          position: [-(REEL_BEZEL_WIDTH - REEL_BEZEL_BORDER) / 2, 0, bezelZ],
-          size: [REEL_BEZEL_BORDER, REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER * 2, REEL_BEZEL_DEPTH],
-        },
-        {
-          key: 'right',
-          position: [(REEL_BEZEL_WIDTH - REEL_BEZEL_BORDER) / 2, 0, bezelZ],
-          size: [REEL_BEZEL_BORDER, REEL_BEZEL_HEIGHT - REEL_BEZEL_BORDER * 2, REEL_BEZEL_DEPTH],
-        },
-      ].map((bezel) => (
-        <mesh key={bezel.key} position={bezel.position as [number, number, number]}>
-          <boxGeometry args={bezel.size as [number, number, number]} />
+      {REEL_BEZELS.map((bezel) => (
+        <mesh key={bezel.key} position={bezel.position}>
+          <boxGeometry args={bezel.size} />
           <meshStandardMaterial color="#1a1315" emissive="#080608" emissiveIntensity={0.12} metalness={0.42} roughness={0.38} />
         </mesh>
       ))}
-      <group position={[0, 0, REEL_DRUM_CENTER_Z]}>
+      <group position={[0, 0, REEL_DRUM_CENTER_Z]} ref={drumRef}>
         <mesh rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[REEL_CORE_RADIUS, REEL_CORE_RADIUS, REEL_CARD_WIDTH * 0.96, 32, 1, true]} />
           <meshStandardMaterial color="#cabf9e" emissive="#84755d" emissiveIntensity={0.12} metalness={0.2} roughness={0.52} />
         </mesh>
         {strip.map((symbol, symbolIndex) => {
-          const angle = (symbolIndex - reel.position) * REEL_SYMBOL_ANGLE
-
+          const symbolTransform = symbolTransforms[symbolIndex]
           return (
             <group
-              key={`${reelIndex}-${symbolIndex}`}
-              position={[0, Math.sin(angle) * REEL_RADIUS, Math.cos(angle) * REEL_RADIUS]}
-              rotation={[-angle, 0, 0]}
+              key={symbolTransform.key}
+              position={symbolTransform.position}
+              rotation={symbolTransform.rotation}
             >
               <ReelSymbolCard symbol={symbol} />
             </group>
@@ -353,18 +411,24 @@ function ReelDrum({ reelIndex, reelX, reel, stopEnabled, onStop }: ReelDrumProps
           roughness={0.08}
         />
       </mesh>
-      <mesh onClick={stopEnabled ? () => onStop(reelIndex) : undefined} position={[0, 0, REEL_CLICK_Z]}>
+      <mesh onClick={stopEnabled ? handleStop : undefined} position={[0, 0, REEL_CLICK_Z]}>
         <boxGeometry args={[REEL_WINDOW_WIDTH + 0.06, REEL_WINDOW_HEIGHT + 0.06, 0.08]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
     </group>
   )
-}
+})
 
 export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
   const spinBetRef = useRef(0)
   const pendingSpinSettlementRef = useRef(false)
-  const [reels, setReels] = useState<ReelState[]>(() => createInitialReels())
+  const initialReelsRef = useRef<ReelState[] | null>(null)
+  if (initialReelsRef.current === null) {
+    initialReelsRef.current = createInitialReels()
+  }
+  const initialReels = initialReelsRef.current
+  const reelsRef = useRef<ReelState[]>(initialReels)
+  const [reels, setReels] = useState<ReelState[]>(initialReels)
   const [credits, setCredits] = useState(START_CREDITS)
   const [bet, setBet] = useState(0)
   const [message, setMessage] = useState('INSERT MEDAL')
@@ -376,29 +440,26 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
   const [debugSpinBet, setDebugSpinBet] = useState(0)
   const isSpinning = reels.some((reel) => reel.isSpinning)
   const spinBet = resolveSpinBet(bet, lastOutcome)
-  const activePaylines = getActivePaylines(bet)
-  const activePaylineIds = new Set(activePaylines.map((payline) => payline.id))
-  const displayedPaylines = ALL_PAYLINES.filter((payline) => {
-    return activePaylineIds.has(payline.id) || isHorizontalPayline(payline)
-  })
+  const activePaylineIds = ACTIVE_PAYLINE_ID_SETS_BY_BET[bet]
+  const displayedPaylines = DISPLAYED_PAYLINES_BY_BET[bet]
   const activeOutcome = spinHitKind === null ? lastOutcome : MISS_OUTCOME
   const panelTitle = bonusFlag === 'BIG' ? 'BIG BONUS' : bonusFlag === 'REG' ? 'REG BONUS' : lastOutcome.title
   const panelColor = bonusFlag === 'BIG' ? '#fbbf24' : bonusFlag === 'REG' ? '#f472b6' : lastOutcome.color
-  const debugActiveLines = getActivePaylines(debugSpinBet)
+  const debugActiveLines = ACTIVE_PAYLINES_BY_BET[debugSpinBet]
   const debugDrawLabel = `抽選役 ${debugDrawKind ?? '---'}`
   const debugConfirmedLabel = `確定役 ${debugConfirmedKind ?? '---'}`
   const debugPaylineLabel = `有効ライン ${debugActiveLines.length === 0 ? '---' : debugActiveLines.map((payline) => PAYLINE_DEBUG_LABELS[payline.id]).join('/')}`
 
-  const insertMedal = () => {
+  const insertMedal = useCallback(() => {
     if (isSpinning) {
       return
     }
 
     setCredits((current) => Math.min(99, current + 10))
     setMessage('MEDAL +10')
-  }
+  }, [isSpinning])
 
-  const betOne = () => {
+  const betOne = useCallback(() => {
     if (isSpinning) {
       return
     }
@@ -416,9 +477,9 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
     const nextBet = bet + 1
     setBet(nextBet)
     setMessage(`BET ${nextBet}`)
-  }
+  }, [bet, credits, isSpinning])
 
-  const maxBet = () => {
+  const maxBet = useCallback(() => {
     if (isSpinning) {
       return
     }
@@ -431,9 +492,9 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
     setBet(nextBet)
     setMessage(`MAX BET ${nextBet}`)
-  }
+  }, [credits, isSpinning])
 
-  const startSpin = () => {
+  const startSpin = useCallback(() => {
     if (isSpinning) {
       return
     }
@@ -458,23 +519,26 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
     setDebugSpinBet(spinBet)
     pendingSpinSettlementRef.current = true
     setMessage('LEVER ON / TOUCH WINDOWS')
-    setReels((current) => {
-      return current.map((reel, reelIndex) => ({
+    setReels(() => {
+      const next = reelsRef.current.map((reel, reelIndex) => ({
         position: reel.position,
         targetIndex: wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length),
         stopAt: null,
         isSpinning: true,
       }))
+      reelsRef.current = next
+      return next
     })
-  }
+  }, [bonusFlag, isSpinning, spinBet, bet])
 
-  const stopReel = (reelIndex: number) => {
+  const stopReel = useCallback((reelIndex: number) => {
     if (!isSpinning || spinHitKind === null) {
       return
     }
 
-    setReels((current) => {
-      const lockedCenterIndices = current.map((reel, index) => {
+    setReels(() => {
+      const currentReels = reelsRef.current
+      const lockedCenterIndices = currentReels.map((reel, index) => {
         if (index === reelIndex || (reel.isSpinning && reel.stopAt === null)) {
           return null
         }
@@ -485,7 +549,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
         )
       }) as [number | null, number | null, number | null]
 
-      return current.map((reel, index) => {
+      const next = currentReels.map((reel, index) => {
         if (index !== reelIndex || !reel.isSpinning || reel.stopAt !== null) {
           return reel
         }
@@ -506,68 +570,38 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           stopAt: reel.position + extraTravel + wrapDistance(reel.position, resolution.stopIndex, stripLength),
         }
       })
+      reelsRef.current = next
+      return next
     })
 
     setMessage(`STOP ${reelIndex + 1}`)
-  }
+  }, [bonusFlag, isSpinning, spinHitKind])
 
   const canStopReel = (reelIndex: number) => {
     return reels[reelIndex].isSpinning && reels[reelIndex].stopAt === null
   }
 
   useFrame((_state, delta) => {
-    if (!isSpinning) {
+    const currentReels = reelsRef.current
+    if (!currentReels.some((reel) => reel.isSpinning)) {
       return
     }
 
-    setReels((current) => {
-      const next = current.map((reel) => {
-        if (!reel.isSpinning) {
-          return reel
-        }
+    const next = currentReels.map((reel) => advanceReelAnimation(reel, delta))
+    reelsRef.current = next
 
-        if (reel.stopAt === null) {
-          return {
-            ...reel,
-            position: reel.position + delta * 18,
-          }
-        }
+    if (!next.every((reel) => !reel.isSpinning)) {
+      return
+    }
 
-        const remaining = reel.stopAt - reel.position
-        const step = Math.min(remaining, delta * Math.max(6, remaining * 8))
-        const positionNow = reel.position + step
-
-        if (remaining <= 0.02 || positionNow >= reel.stopAt - 0.01) {
-          return {
-            position: reel.targetIndex,
-            targetIndex: reel.targetIndex,
-            stopAt: null,
-            isSpinning: false,
-          }
-        }
-
-        return {
-          ...reel,
-          position: positionNow,
-        }
-      })
-
-      const allStopped = next.every((reel) => !reel.isSpinning)
-      if (allStopped) {
-        const finishedIndices = next.map((reel, reelIndex) => {
-          return wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length)
-        }) as [number, number, number]
-
-        return next.map((reel, reelIndex) => ({
-          ...reel,
-          position: finishedIndices![reelIndex],
-          stopAt: null,
-          isSpinning: false,
-        }))
-      }
-
-      return next
-    })
+    const finalized = next.map((reel, reelIndex) => ({
+      ...reel,
+      position: wrapIndex(Math.round(reel.position), REEL_STRIPS[reelIndex].length),
+      stopAt: null,
+      isSpinning: false,
+    }))
+    reelsRef.current = finalized
+    setReels(finalized)
   })
 
   useEffect(() => {
@@ -638,31 +672,36 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             <meshStandardMaterial color="#231417" emissive="#13090b" emissiveIntensity={0.25} metalness={0.42} roughness={0.3} />
           </mesh>
 
-          {[
-            { label: 'BIG', x: -1.08, active: bonusFlag === 'BIG', color: '#fbbf24' },
-            { label: 'REG', x: 0, active: bonusFlag === 'REG', color: '#f472b6' },
-            { label: 'SPIN', x: 1.08, active: isSpinning, color: '#67e8f9' },
-          ].map((lamp) => (
-            <group key={lamp.label} position={[lamp.x, 3.9, 1.14]}>
-              <mesh>
-                <sphereGeometry args={[0.14, 20, 20]} />
-                <meshStandardMaterial
-                  color={lamp.active ? lamp.color : '#4a3c38'}
-                  emissive={lamp.active ? lamp.color : '#140f10'}
-                  emissiveIntensity={lamp.active ? 1.1 : 0.05}
-                  metalness={0.2}
-                  roughness={0.18}
-                />
-              </mesh>
-              <mesh position={[0, -0.18, -0.03]}>
-                <boxGeometry args={[0.44, 0.08, 0.05]} />
-                <meshStandardMaterial color={lamp.active ? lamp.color : '#49363a'} emissive={lamp.active ? lamp.color : '#1a1113'} emissiveIntensity={lamp.active ? 0.45 : 0.08} metalness={0.22} roughness={0.25} />
-              </mesh>
-              <Text anchorX="center" anchorY="middle" color="#f9ead5" fontSize={0.075} position={[0, -0.3, 0.06]}>
-                {lamp.label}
-              </Text>
-            </group>
-          ))}
+          {STATUS_LAMPS.map((lamp) => {
+            const active =
+              lamp.kind === 'SPIN'
+                ? isSpinning
+                : lamp.kind === 'BIG'
+                  ? bonusFlag === 'BIG'
+                  : bonusFlag === 'REG'
+
+            return (
+              <group key={lamp.label} position={[lamp.x, 3.9, 1.14]}>
+                <mesh>
+                  <sphereGeometry args={[0.14, 20, 20]} />
+                  <meshStandardMaterial
+                    color={active ? lamp.color : '#4a3c38'}
+                    emissive={active ? lamp.color : '#140f10'}
+                    emissiveIntensity={active ? 1.1 : 0.05}
+                    metalness={0.2}
+                    roughness={0.18}
+                  />
+                </mesh>
+                <mesh position={[0, -0.18, -0.03]}>
+                  <boxGeometry args={[0.44, 0.08, 0.05]} />
+                  <meshStandardMaterial color={active ? lamp.color : '#49363a'} emissive={active ? lamp.color : '#1a1113'} emissiveIntensity={active ? 0.45 : 0.08} metalness={0.22} roughness={0.25} />
+                </mesh>
+                <Text anchorX="center" anchorY="middle" color="#f9ead5" fontSize={0.075} position={[0, -0.3, 0.06]}>
+                  {lamp.label}
+                </Text>
+              </group>
+            )
+          })}
 
           <mesh position={[0, WINDOW_CENTER_Y, 0.92]} receiveShadow>
             <boxGeometry args={[2.72, REEL_PANEL_HEIGHT + 0.28, 0.08]} />
@@ -675,11 +714,15 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
           {displayedPaylines.map((payline) => {
             const active = activePaylineIds.has(payline.id)
-            const { length, position: paylinePosition, rotation } = paylineMeshTransform(payline)
+            const paylineTransform = PAYLINE_MESH_TRANSFORMS.get(payline.id)
+
+            if (paylineTransform === undefined) {
+              return null
+            }
 
             return (
-              <mesh key={payline.id} position={paylinePosition} rotation={rotation}>
-                <boxGeometry args={[length, PAYLINE_DISPLAY_THICKNESS, PAYLINE_DISPLAY_THICKNESS]} />
+              <mesh key={payline.id} position={paylineTransform.position} rotation={paylineTransform.rotation}>
+                <boxGeometry args={[paylineTransform.length, PAYLINE_DISPLAY_THICKNESS, PAYLINE_DISPLAY_THICKNESS]} />
                 <meshStandardMaterial
                   color={active ? '#fb7185' : '#35252b'}
                   emissive={active ? '#fb7185' : '#000000'}
@@ -694,7 +737,16 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           {REEL_X_POSITIONS.map((reelX, reelIndex) => {
             const stopEnabled = canStopReel(reelIndex)
 
-            return <ReelDrum key={reelIndex} onStop={stopReel} reel={reels[reelIndex]} reelIndex={reelIndex} reelX={reelX} stopEnabled={stopEnabled} />
+            return (
+              <ReelDrum
+                key={reelIndex}
+                onStop={stopReel}
+                reelIndex={reelIndex}
+                reelX={reelX}
+                reelsRef={reelsRef}
+                stopEnabled={stopEnabled}
+              />
+            )
           })}
 
           <mesh position={[-1.67, 3.02, 1.08]}>
@@ -763,10 +815,35 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             {message}
           </Text>
 
-          <ControlButton color="#3b82f6" enabled={!isSpinning} label="MEDAL" onPress={insertMedal} position={[-1.35, 0.98, 1.23]} />
-          <ControlButton color="#ef4444" enabled={!isSpinning && bet < 3 && credits > bet} label="BET 1" onPress={betOne} position={[-0.45, 0.98, 1.23]} />
-          <ControlButton color="#f59e0b" enabled={!isSpinning && credits > 0} label="MAX" onPress={maxBet} position={[0.45, 0.98, 1.23]} />
-          <ControlButton color="#22c55e" enabled={!isSpinning && spinBet > 0} label="LEVER" onPress={startSpin} position={[1.35, 1.12, 1.23]} size={[0.62, 0.3, 0.36]} />
+          <ControlButton
+            color="#3b82f6"
+            enabled={!isSpinning}
+            label="MEDAL"
+            onPress={insertMedal}
+            position={CONTROL_BUTTON_LAYOUTS.medal.position}
+          />
+          <ControlButton
+            color="#ef4444"
+            enabled={!isSpinning && bet < 3 && credits > bet}
+            label="BET 1"
+            onPress={betOne}
+            position={CONTROL_BUTTON_LAYOUTS.betOne.position}
+          />
+          <ControlButton
+            color="#f59e0b"
+            enabled={!isSpinning && credits > 0}
+            label="MAX"
+            onPress={maxBet}
+            position={CONTROL_BUTTON_LAYOUTS.max.position}
+          />
+          <ControlButton
+            color="#22c55e"
+            enabled={!isSpinning && spinBet > 0}
+            label="LEVER"
+            onPress={startSpin}
+            position={CONTROL_BUTTON_LAYOUTS.lever.position}
+            size={CONTROL_BUTTON_LAYOUTS.lever.size}
+          />
 
           <mesh castShadow receiveShadow position={[0, 0.08, 0]}>
             <boxGeometry args={[4.8, 0.16, 2.5]} />
