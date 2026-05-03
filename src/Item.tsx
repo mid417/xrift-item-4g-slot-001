@@ -26,7 +26,7 @@ export interface ItemProps {
 
 export const ITEM_MODEL_SCALE = 1 / 5
 const ITEM_BASE_Y_SCALE_COMPENSATION = 1 / ITEM_MODEL_SCALE
-const PEDESTAL_HEIGHT = 4.8
+const PEDESTAL_HEIGHT = 0.97
 
 interface ReelState {
   position: number
@@ -182,16 +182,16 @@ const STATUS_LAMPS = [
 const DEFAULT_CONTROL_BUTTON_SIZE: [number, number, number] = [0.58, 0.18, 0.34]
 const CONTROL_BUTTON_LAYOUTS = {
   medal: {
-    position: [-1.35, 0.98, 1.23] as [number, number, number],
+    position: [-1.68, 1.4, 1.23] as [number, number, number],
   },
   betOne: {
-    position: [-0.45, 0.98, 1.23] as [number, number, number],
+    position: [-0.45, 1.4, 1.23] as [number, number, number],
   },
   max: {
-    position: [0.45, 0.98, 1.23] as [number, number, number],
+    position: [0.45, 1.4, 1.23] as [number, number, number],
   },
   lever: {
-    position: [1.35, 1.12, 1.23] as [number, number, number],
+    position: [1.35, 1.6, 1.23] as [number, number, number],
     size: [0.62, 0.3, 0.36] as [number, number, number],
   },
   chairToggle: {
@@ -199,14 +199,14 @@ const CONTROL_BUTTON_LAYOUTS = {
     size: [0.76, 0.16, 0.32] as [number, number, number],
   },
 } as const
-const CHAIR_POSITION: [number, number, number] = [0, 0, 2.45]
+const CHAIR_POSITION: [number, number, number] = [0, 0, 3]
 const CHAIR_VISIBLE_POSITION: [number, number, number] = [CHAIR_POSITION[0], CHAIR_POSITION[1], CHAIR_POSITION[2] + 0.8]
-const CHAIR_SEAT_SIZE: [number, number, number] = [1.67, 0.48, 1.44]
+const CHAIR_SEAT_SIZE: [number, number, number] = [1.67, 0.48, 2]
 const CHAIR_SEAT_COLLIDER_ARGS: [number, number, number] = [0.835, 0.24, 0.72]
 const CHAIR_SEAT_POSITION: [number, number, number] = [0, 4.04, 0]
 const CHAIR_BACKREST_SIZE: [number, number, number] = [1.67, 1.8, 0.16]
 const CHAIR_BACKREST_COLLIDER_ARGS: [number, number, number] = [0.835, 0.9, 0.08]
-const CHAIR_BACKREST_POSITION: [number, number, number] = [0, 5.16, 0.64]
+const CHAIR_BACKREST_POSITION: [number, number, number] = [0, 5.16, 0.9]
 const CHAIR_LEG_SIZE: [number, number, number] = [0.16, 3.8, 0.16]
 const CHAIR_LEG_COLLIDER_ARGS: [number, number, number] = [0.08, 1.9, 0.08]
 const CHAIR_LEG_POSITIONS = [
@@ -745,12 +745,14 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
         <group position={[0, PEDESTAL_HEIGHT, 0]}>
           {/* ペデスタル（台座）- スロットマシン下部の支柱 */}
           <group scale={[1, ITEM_BASE_Y_SCALE_COMPENSATION, 1]}>
-            <mesh castShadow receiveShadow position={[0, -PEDESTAL_HEIGHT / 2, 0]}>
+            <mesh castShadow receiveShadow position={[0, PEDESTAL_HEIGHT / 2 - PEDESTAL_HEIGHT / ITEM_BASE_Y_SCALE_COMPENSATION, 0]}>
               <boxGeometry args={[5, PEDESTAL_HEIGHT, 2.7]} />
               <meshStandardMaterial color="#201818" metalness={0.28} roughness={0.72} />
             </mesh>
           </group>
+        </group>
 
+        <group position={[0, 4.8, 0]}>
           {/* キャビネット本体 - メインの黒いキャビネット構造 */}
           <mesh castShadow receiveShadow position={[0, 2.5, 0]}>
             <boxGeometry args={[4.4, 5, CABINET_BODY_DEPTH]} />
@@ -958,7 +960,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           <ControlButton
             color="#f59e0b"
             enabled={canMaxBet}
-            label="MAX"
+            label="MAX BET"
             onPress={maxBet}
             position={CONTROL_BUTTON_LAYOUTS.max.position}
           />
