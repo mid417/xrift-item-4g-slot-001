@@ -35,7 +35,7 @@ test('slot machine keeps the chair hidden by default and toggles a widened chair
   assert.match(source, /\[-0\.63, 1\.9, -0\.56\]/)
   assert.match(source, /\[0\.63, 1\.9, 0\.56\]/)
   assert.match(source, /const \[isChairVisible, setIsChairVisible\] = useState\(false\)/)
-  assert.match(source, /const toggleChair = useCallback\(\(\) => \{\s*setIsChairVisible\(\(current\) => !current\)\s*\}, \[\]\)/)
+  assert.match(source, /const toggleChair = \(\) => \{\s*setIsChairVisible\(\(current\) => !current\)\s*\}/)
   assert.match(source, /label=\{isChairVisible \? 'CHAIR OFF' : 'CHAIR ON'\}/)
   assert.match(source, /position=\{CONTROL_BUTTON_LAYOUTS\.chairToggle\.position\}/)
   assert.match(source, /size=\{CONTROL_BUTTON_LAYOUTS\.chairToggle\.size\}/)

@@ -249,6 +249,7 @@ function createInitialReels(): ReelState[] {
   }))
 }
 
+// 制御ボタン - MEDAL、BET 1、MAX、CHAIR ON/OFF、LEVER などのボタン表示と機能を持つコンポーネント
 const ControlButton = memo(function ControlButton({
   label,
   position,
@@ -263,10 +264,13 @@ const ControlButton = memo(function ControlButton({
 
   return (
     <group position={position}>
+      {/* このオブジェクトはコントロールボタン（メダル・BET・MAX・レバーなど）のグループ */}
+      {/* ボタン背面の暗いベース */}
       <mesh position={[0, -0.01, -0.03]} receiveShadow>
         <boxGeometry args={[size[0] + 0.1, size[1] + 0.1, 0.08]} />
         <meshStandardMaterial color="#120d10" metalness={0.65} roughness={0.36} />
       </mesh>
+      {/* ボタン本体（クリッカブルなメイン部分） */}
       <mesh
         castShadow
         receiveShadow
@@ -284,6 +288,7 @@ const ControlButton = memo(function ControlButton({
           roughness={0.22}
         />
       </mesh>
+      {/* ボタンのラベル背景部分 */}
       <mesh position={[0, size[1] * 0.22, size[2] / 2 + 0.005]}>
         <boxGeometry args={[size[0] * 0.8, size[1] * 0.18, 0.01]} />
         <meshStandardMaterial
@@ -312,6 +317,7 @@ interface ReelSymbolCardProps {
   symbol: ReelSymbol
 }
 
+// リール上の表示シンボルカード - リールに配置される各シンボルの表面メッシュとテキスト表示
 const ReelSymbolCard = memo(function ReelSymbolCard({ symbol }: ReelSymbolCardProps) {
   const label = SYMBOL_LABELS[symbol]
   const faceColor = symbol === 'BAR' ? '#111827' : SYMBOL_COLORS[symbol]
@@ -321,10 +327,13 @@ const ReelSymbolCard = memo(function ReelSymbolCard({ symbol }: ReelSymbolCardPr
 
   return (
     <group>
+      {/* このオブジェクトはリール上の１つのシンボルカード（7、BAR、BELLなど） */}
+      {/* シンボルカード本体（白いベース） */}
       <mesh castShadow receiveShadow>
         <boxGeometry args={[REEL_CARD_WIDTH, REEL_CARD_HEIGHT, REEL_CARD_DEPTH]} />
         <meshBasicMaterial color="#fffaf0" />
       </mesh>
+      {/* シンボルの表面色 */}
       <mesh position={[0, 0, REEL_CARD_DEPTH / 2 + 0.006]}>
         <planeGeometry args={[REEL_CARD_WIDTH * 0.8, REEL_CARD_HEIGHT * 0.74]} />
         <meshBasicMaterial color={faceColor} side={DoubleSide} />
@@ -366,6 +375,7 @@ interface ReelDrumProps {
   onStop: (reelIndex: number) => void
 }
 
+// リールドラム - シンボルを回転表示するドラム、ベゼル、ガラス、クリック判定エリアを含む
 const ReelDrum = memo(function ReelDrum({ reelIndex, reelX, reelsRef, stopEnabled, onStop }: ReelDrumProps) {
   const strip = REEL_STRIPS[reelIndex]
   const drumRef = useRef<Group>(null)
@@ -393,17 +403,22 @@ const ReelDrum = memo(function ReelDrum({ reelIndex, reelX, reelsRef, stopEnable
 
   return (
     <group position={[reelX, WINDOW_CENTER_Y, 0]}>
+      {/* このオブジェクトはリール本体（回転ドラム）のグループ */}
+      {/* リールの枠飾り（ベゼル） */}
       {REEL_BEZELS.map((bezel) => (
         <mesh key={bezel.key} position={bezel.position}>
           <boxGeometry args={bezel.size} />
           <meshStandardMaterial color="#1a1315" emissive="#080608" emissiveIntensity={0.12} metalness={0.42} roughness={0.38} />
         </mesh>
       ))}
+      {/* リール本体（回転するシンボルドラム） */}
       <group position={[0, 0, REEL_DRUM_CENTER_Z]} ref={drumRef}>
+        {/* リールの中心軸 */}
         <mesh rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[REEL_CORE_RADIUS, REEL_CORE_RADIUS, REEL_CARD_WIDTH * 0.96, 32, 1, true]} />
           <meshStandardMaterial color="#cabf9e" emissive="#84755d" emissiveIntensity={0.12} metalness={0.2} roughness={0.52} />
         </mesh>
+        {/* リール上のシンボルカード */}
         {strip.map((symbol, symbolIndex) => {
           const symbolTransform = symbolTransforms[symbolIndex]
           return (
@@ -417,6 +432,7 @@ const ReelDrum = memo(function ReelDrum({ reelIndex, reelX, reelsRef, stopEnable
           )
         })}
       </group>
+      {/* リールウィンドウガラス */}
       <mesh position={[0, 0, REEL_GLASS_Z]}>
         <boxGeometry args={[REEL_WINDOW_WIDTH - 0.04, REEL_WINDOW_HEIGHT - 0.04, 0.02]} />
         <meshStandardMaterial
@@ -429,6 +445,7 @@ const ReelDrum = memo(function ReelDrum({ reelIndex, reelX, reelsRef, stopEnable
           roughness={0.08}
         />
       </mesh>
+      {/* リール停止ボタン（クリッカブルエリア） */}
       <mesh onClick={stopEnabled ? handleStop : undefined} position={[0, 0, REEL_CLICK_Z]}>
         <boxGeometry args={[REEL_WINDOW_WIDTH + 0.06, REEL_WINDOW_HEIGHT + 0.06, 0.08]} />
         <meshBasicMaterial transparent opacity={0} />
@@ -617,9 +634,9 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
     return reels[reelIndex].isSpinning && reels[reelIndex].stopAt === null
   }
 
-  const toggleChair = useCallback(() => {
+    const toggleChair = () => {
     setIsChairVisible((current) => !current)
-  }, [])
+  }
 
   useFrame((_state, delta) => {
     const currentReels = reelsRef.current
@@ -723,8 +740,10 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
   return (
     <group position={position} scale={scale * ITEM_MODEL_SCALE}>
+      {/* スロットマシン本体 - 固定リジッドボディ、ペデスタル、キャビネット、パネル、ボタン、椅子を包含 */}
       <RigidBody type="fixed" colliders="cuboid">
         <group position={[0, PEDESTAL_HEIGHT, 0]}>
+          {/* ペデスタル（台座）- スロットマシン下部の支柱 */}
           <group scale={[1, ITEM_BASE_Y_SCALE_COMPENSATION, 1]}>
             <mesh castShadow receiveShadow position={[0, -PEDESTAL_HEIGHT / 2, 0]}>
               <boxGeometry args={[5, PEDESTAL_HEIGHT, 2.7]} />
@@ -732,15 +751,18 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             </mesh>
           </group>
 
+          {/* キャビネット本体 - メインの黒いキャビネット構造 */}
           <mesh castShadow receiveShadow position={[0, 2.5, 0]}>
             <boxGeometry args={[4.4, 5, CABINET_BODY_DEPTH]} />
             <meshStandardMaterial color="#171215" metalness={0.68} roughness={0.34} />
           </mesh>
 
+          {/* トップパネル - 結果表示背景の赤パネル部分 */}
           <mesh castShadow position={[0, 4.55, 1.08]}>
             <boxGeometry args={[3.72, 0.96, 0.18]} />
             <meshStandardMaterial color="#621d1d" emissive="#2d0d0b" emissiveIntensity={0.4} metalness={0.45} roughness={0.28} />
           </mesh>
+          {/* 結果表示パネル - 結果に応じて色が変わる発光パネル */}
           <mesh castShadow position={[0, 4.55, 1.16]}>
             <boxGeometry args={[3.4, 0.68, 0.06]} />
             <meshStandardMaterial
@@ -751,6 +773,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
               roughness={0.18}
             />
           </mesh>
+          {/* パネルタイトルライン - 上下のゴールドラインデコレーション */}
           <mesh position={[0, 4.18, 1.2]}>
             <boxGeometry args={[2.9, 0.06, 0.03]} />
             <meshStandardMaterial color="#d4af37" emissive="#d4af37" emissiveIntensity={0.5} metalness={0.55} roughness={0.24} />
@@ -767,6 +790,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             <meshStandardMaterial color="#231417" emissive="#13090b" emissiveIntensity={0.25} metalness={0.42} roughness={0.3} />
           </mesh>
 
+          {/* ステータスランプ - SPIN、BIG、REG 状態を示すランプ群 */}
           {STATUS_LAMPS.map((lamp) => {
             const active =
               lamp.kind === 'SPIN'
@@ -798,15 +822,18 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             )
           })}
 
+          {/* リールパネル背面 - リール表示エリアの背面の暗いパネル */}
           <mesh position={[0, WINDOW_CENTER_Y, 0.92]} receiveShadow>
             <boxGeometry args={[2.72, REEL_PANEL_HEIGHT + 0.28, 0.08]} />
             <meshStandardMaterial color="#14171d" emissive="#0f1720" emissiveIntensity={0.3} metalness={0.45} roughness={0.22} />
           </mesh>
+          {/* フロントパネル（枠） - リールを囲む前面の装飾枠 */}
           <mesh castShadow position={[0, WINDOW_CENTER_Y, REEL_PANEL_SHROUD_BACK_Z]} receiveShadow>
             <extrudeGeometry args={[FRONT_PANEL_SHAPE, { depth: REEL_PANEL_SHROUD_DEPTH, bevelEnabled: false }]} />
             <meshStandardMaterial color="#69615f" emissive="#1f1717" emissiveIntensity={0.18} metalness={0.75} roughness={0.18} />
           </mesh>
 
+          {/* ペイラインディスプレイ - アクティブなペイラインを示す発光ライン群 */}
           {displayedPaylines.map((payline) => {
             const active = activePaylineIds.has(payline.id)
             const paylineTransform = PAYLINE_MESH_TRANSFORMS.get(payline.id)
@@ -829,6 +856,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             )
           })}
 
+          {/* リール群 - 3つのリールドラム（左中右） */}
           {REEL_X_POSITIONS.map((reelX, reelIndex) => {
             const stopEnabled = canStopReel(reelIndex)
 
@@ -844,10 +872,12 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             )
           })}
 
+          {/* 左サイドパネル - 上部：ペイテーブル、中部：クレジット/ベット/配当表示 */}
           <mesh position={[-1.67, 3.02, 1.08]}>
             <boxGeometry args={[0.78, 0.88, 0.1]} />
             <meshStandardMaterial color="#161215" emissive="#09070a" emissiveIntensity={0.18} metalness={0.42} roughness={0.24} />
           </mesh>
+          {/* 右サイドパネル - 結果表示エリア */}
           <mesh position={[1.67, 3.02, 1.08]}>
             <boxGeometry args={[0.78, 0.88, 0.1]} />
             <meshStandardMaterial color="#161215" emissive="#09070a" emissiveIntensity={0.18} metalness={0.42} roughness={0.24} />
@@ -910,6 +940,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             {message}
           </Text>
 
+          {/* 制御ボタン群 - MEDAL、BET 1、MAX、CHAIR ON/OFF、LEVER ボタン配置 */}
           <ControlButton
             color="#3b82f6"
             enabled={!isSpinning}
@@ -956,6 +987,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           <pointLight color={activeOutcome.color} distance={4.5} intensity={isSpinning ? 1.8 : activeOutcome.kind === 'MISS' ? 0.45 : 1.25} position={[0, 4.2, 0.9]} />
         </group>
       </RigidBody>
+      {/* 椅子 - 表示可能なオプション椅子（CHAIR ON/OFFボタンで表示/非表示切り替え） */}
       {isChairVisible ? (
         <RigidBody type="fixed" colliders={false}>
           <group position={CHAIR_VISIBLE_POSITION}>
@@ -964,14 +996,17 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
             {CHAIR_LEG_POSITIONS.map((chairLegPosition, chairLegIndex) => (
               <CuboidCollider key={`chair-leg-collider-${chairLegIndex}`} args={CHAIR_LEG_COLLIDER_ARGS} position={chairLegPosition} />
             ))}
+            {/* 椅子の座面 */}
             <mesh castShadow receiveShadow position={CHAIR_SEAT_POSITION}>
               <boxGeometry args={CHAIR_SEAT_SIZE} />
               <meshStandardMaterial color="#6b3f2f" emissive="#1f0f09" emissiveIntensity={0.16} metalness={0.22} roughness={0.56} />
             </mesh>
+            {/* 椅子の背もたれ */}
             <mesh castShadow receiveShadow position={CHAIR_BACKREST_POSITION}>
               <boxGeometry args={CHAIR_BACKREST_SIZE} />
               <meshStandardMaterial color="#593327" emissive="#160d09" emissiveIntensity={0.14} metalness={0.18} roughness={0.58} />
             </mesh>
+            {/* 椅子の脚（4本） */}
             {CHAIR_LEG_POSITIONS.map((chairLegPosition, chairLegIndex) => (
               <mesh castShadow receiveShadow key={`chair-leg-mesh-${chairLegIndex}`} position={chairLegPosition}>
                 <boxGeometry args={CHAIR_LEG_SIZE} />
