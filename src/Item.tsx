@@ -1,16 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Text } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { RigidBody } from '@react-three/rapier'
+import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import { DoubleSide, Shape, type Group } from 'three'
-import { advanceReelAnimation } from './itemAnimation'
+import { advanceReelAnimation, resolveStopPosition } from './itemAnimation'
 import { rollLeverHitKind } from './leverLottery'
 import { ALL_PAYLINES, getActivePaylines, isHorizontalPayline, type PaylineDefinition } from './paylines'
 import {
   MISS_OUTCOME,
   evaluateBoard,
-  resolveSpinBet,
   resolveBonusFlag,
+  resolveSpinControls,
   resolveStopIndex,
   type BonusFlag,
   type HitKind,
@@ -74,6 +74,8 @@ const REEL_BEZEL_BORDER = 0.04
 const PAYLINE_DISPLAY_WIDTH = 2.56
 const PAYLINE_DISPLAY_THICKNESS = 0.03
 const PAYLINE_DISPLAY_Z = 1.19
+const MIN_STOP_TRAVEL = 6
+const MIN_STOP_TRAVEL_STEP = 1.4
 const SYMBOL_LABELS: Record<ReelSymbol, string> = {
   RED_7: '7',
   BLUE_7: 'V',
@@ -101,10 +103,6 @@ const PAYLINE_DEBUG_LABELS = {
   diagonalDown: 'DOWN',
   diagonalUp: 'UP',
 } as const
-
-function wrapDistance(current: number, target: number, length: number): number {
-  return ((target - current) % length + length) % length
-}
 
 function lineY(rowOffset: number): number {
   return WINDOW_CENTER_Y - rowOffset * ROW_HEIGHT
@@ -197,6 +195,21 @@ const CONTROL_BUTTON_LAYOUTS = {
     size: [0.62, 0.3, 0.36] as [number, number, number],
   },
 } as const
+const CHAIR_POSITION: [number, number, number] = [0, 0, 2.45]
+const CHAIR_SEAT_SIZE: [number, number, number] = [1.18, 0.48, 1.02]
+const CHAIR_SEAT_COLLIDER_ARGS: [number, number, number] = [0.59, 0.24, 0.51]
+const CHAIR_SEAT_POSITION: [number, number, number] = [0, 4.04, 0]
+const CHAIR_BACKREST_SIZE: [number, number, number] = [1.18, 1.8, 0.16]
+const CHAIR_BACKREST_COLLIDER_ARGS: [number, number, number] = [0.59, 0.9, 0.08]
+const CHAIR_BACKREST_POSITION: [number, number, number] = [0, 5.16, 0.43]
+const CHAIR_LEG_SIZE: [number, number, number] = [0.16, 3.8, 0.16]
+const CHAIR_LEG_COLLIDER_ARGS: [number, number, number] = [0.08, 1.9, 0.08]
+const CHAIR_LEG_POSITIONS = [
+  [-0.43, 1.9, -0.35],
+  [0.43, 1.9, -0.35],
+  [-0.43, 1.9, 0.35],
+  [0.43, 1.9, 0.35],
+] as const
 
 const FRONT_PANEL_SHAPE = (() => {
   const shape = createRoundedRectShape(
@@ -439,9 +452,14 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
   const [debugConfirmedKind, setDebugConfirmedKind] = useState<HitKind | null>(null)
   const [debugSpinBet, setDebugSpinBet] = useState(0)
   const isSpinning = reels.some((reel) => reel.isSpinning)
-  const spinBet = resolveSpinBet(bet, lastOutcome)
-  const activePaylineIds = ACTIVE_PAYLINE_ID_SETS_BY_BET[bet]
-  const displayedPaylines = DISPLAYED_PAYLINES_BY_BET[bet]
+  const { activePaylineBet: spinBet, canBetOne, canMaxBet, canLever, isReplayReady } = resolveSpinControls({
+    bet,
+    credits,
+    isSpinning,
+    lastOutcome,
+  })
+  const activePaylineIds = ACTIVE_PAYLINE_ID_SETS_BY_BET[spinBet]
+  const displayedPaylines = DISPLAYED_PAYLINES_BY_BET[spinBet]
   const activeOutcome = spinHitKind === null ? lastOutcome : MISS_OUTCOME
   const panelTitle = bonusFlag === 'BIG' ? 'BIG BONUS' : bonusFlag === 'REG' ? 'REG BONUS' : lastOutcome.title
   const panelColor = bonusFlag === 'BIG' ? '#fbbf24' : bonusFlag === 'REG' ? '#f472b6' : lastOutcome.color
@@ -464,6 +482,11 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
       return
     }
 
+    if (isReplayReady) {
+      setMessage(lastOutcome.detail)
+      return
+    }
+
     if (bet >= 3) {
       setMessage('MAX BET')
       return
@@ -477,10 +500,15 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
     const nextBet = bet + 1
     setBet(nextBet)
     setMessage(`BET ${nextBet}`)
-  }, [bet, credits, isSpinning])
+  }, [bet, credits, isReplayReady, isSpinning, lastOutcome.detail])
 
   const maxBet = useCallback(() => {
     if (isSpinning) {
+      return
+    }
+
+    if (isReplayReady) {
+      setMessage(lastOutcome.detail)
       return
     }
 
@@ -492,7 +520,7 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
 
     setBet(nextBet)
     setMessage(`MAX BET ${nextBet}`)
-  }, [credits, isSpinning])
+  }, [credits, isReplayReady, isSpinning, lastOutcome.detail])
 
   const startSpin = useCallback(() => {
     if (isSpinning) {
@@ -563,11 +591,12 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           pendingKind: spinHitKind,
           bonusFlag,
         })
-        const extraTravel = 6 + index * 1.4
+        const minimumTravel = MIN_STOP_TRAVEL + index * MIN_STOP_TRAVEL_STEP
+
         return {
           ...reel,
           targetIndex: resolution.stopIndex,
-          stopAt: reel.position + extraTravel + wrapDistance(reel.position, resolution.stopIndex, stripLength),
+          stopAt: resolveStopPosition(reel.position, resolution.stopIndex, stripLength, minimumTravel),
         }
       })
       reelsRef.current = next
@@ -824,21 +853,21 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           />
           <ControlButton
             color="#ef4444"
-            enabled={!isSpinning && bet < 3 && credits > bet}
+            enabled={canBetOne}
             label="BET 1"
             onPress={betOne}
             position={CONTROL_BUTTON_LAYOUTS.betOne.position}
           />
           <ControlButton
             color="#f59e0b"
-            enabled={!isSpinning && credits > 0}
+            enabled={canMaxBet}
             label="MAX"
             onPress={maxBet}
             position={CONTROL_BUTTON_LAYOUTS.max.position}
           />
           <ControlButton
             color="#22c55e"
-            enabled={!isSpinning && spinBet > 0}
+            enabled={canLever}
             label="LEVER"
             onPress={startSpin}
             position={CONTROL_BUTTON_LAYOUTS.lever.position}
@@ -851,6 +880,29 @@ export const Item = ({ position = [0, 0, 0], scale = 1 }: ItemProps) => {
           </mesh>
 
           <pointLight color={activeOutcome.color} distance={4.5} intensity={isSpinning ? 1.8 : activeOutcome.kind === 'MISS' ? 0.45 : 1.25} position={[0, 4.2, 0.9]} />
+        </group>
+      </RigidBody>
+      <RigidBody type="fixed" colliders={false}>
+        <group position={CHAIR_POSITION}>
+          <CuboidCollider args={CHAIR_SEAT_COLLIDER_ARGS} position={CHAIR_SEAT_POSITION} />
+          <CuboidCollider args={CHAIR_BACKREST_COLLIDER_ARGS} position={CHAIR_BACKREST_POSITION} />
+          {CHAIR_LEG_POSITIONS.map((chairLegPosition, chairLegIndex) => (
+            <CuboidCollider key={`chair-leg-collider-${chairLegIndex}`} args={CHAIR_LEG_COLLIDER_ARGS} position={chairLegPosition} />
+          ))}
+          <mesh castShadow receiveShadow position={CHAIR_SEAT_POSITION}>
+            <boxGeometry args={CHAIR_SEAT_SIZE} />
+            <meshStandardMaterial color="#6b3f2f" emissive="#1f0f09" emissiveIntensity={0.16} metalness={0.22} roughness={0.56} />
+          </mesh>
+          <mesh castShadow receiveShadow position={CHAIR_BACKREST_POSITION}>
+            <boxGeometry args={CHAIR_BACKREST_SIZE} />
+            <meshStandardMaterial color="#593327" emissive="#160d09" emissiveIntensity={0.14} metalness={0.18} roughness={0.58} />
+          </mesh>
+          {CHAIR_LEG_POSITIONS.map((chairLegPosition, chairLegIndex) => (
+            <mesh castShadow receiveShadow key={`chair-leg-mesh-${chairLegIndex}`} position={chairLegPosition}>
+              <boxGeometry args={CHAIR_LEG_SIZE} />
+              <meshStandardMaterial color="#2a2629" metalness={0.64} roughness={0.32} />
+            </mesh>
+          ))}
         </group>
       </RigidBody>
     </group>

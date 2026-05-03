@@ -13,6 +13,7 @@ const {
   getReachableStopIndices,
   resolveBonusFlag,
   resolveSpinBet,
+  resolveSpinControls,
   resolveStopIndex,
   visibleBoardFromCenterIndices,
 } = await import(modulePath)
@@ -232,6 +233,40 @@ test('resolveSpinBet reuses the replay payout when the next game starts without 
   assert.equal(resolveSpinBet(0, { kind: 'REPLAY', payout: 3 }), 3)
   assert.equal(resolveSpinBet(2, { kind: 'REPLAY', payout: 3 }), 2)
   assert.equal(resolveSpinBet(0, { kind: 'MISS', payout: 0 }), 0)
+})
+
+test('resolveSpinControls keeps bet buttons locked while a replay game is ready', () => {
+  assert.deepEqual(
+    resolveSpinControls({
+      bet: 0,
+      credits: 50,
+      isSpinning: false,
+      lastOutcome: { kind: 'REPLAY', payout: 3 },
+    }),
+    {
+      activePaylineBet: 3,
+      canBetOne: false,
+      canMaxBet: false,
+      canLever: true,
+      isReplayReady: true,
+    },
+  )
+
+  assert.deepEqual(
+    resolveSpinControls({
+      bet: 0,
+      credits: 50,
+      isSpinning: false,
+      lastOutcome: { kind: 'MISS', payout: 0 },
+    }),
+    {
+      activePaylineBet: 0,
+      canBetOne: true,
+      canMaxBet: true,
+      canLever: false,
+      isReplayReady: false,
+    },
+  )
 })
 
 test('getReachableStopIndices wraps across the strip boundary', () => {

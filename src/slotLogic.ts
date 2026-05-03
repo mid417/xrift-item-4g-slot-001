@@ -52,6 +52,21 @@ export interface StopResolution {
   resolvedKind: HitKind
 }
 
+export interface SpinControlInput {
+  bet: number
+  credits: number
+  isSpinning: boolean
+  lastOutcome: Pick<Outcome, 'kind' | 'payout'>
+}
+
+export interface SpinControlState {
+  activePaylineBet: number
+  canBetOne: boolean
+  canMaxBet: boolean
+  canLever: boolean
+  isReplayReady: boolean
+}
+
 export function wrapIndex(value: number, length: number): number {
   return ((value % length) + length) % length
 }
@@ -96,6 +111,24 @@ export function resolveSpinBet(bet: number, lastOutcome: Pick<Outcome, 'kind' | 
   }
 
   return lastOutcome.kind === 'REPLAY' ? lastOutcome.payout : 0
+}
+
+export function resolveSpinControls({
+  bet,
+  credits,
+  isSpinning,
+  lastOutcome,
+}: SpinControlInput): SpinControlState {
+  const activePaylineBet = resolveSpinBet(bet, lastOutcome)
+  const isReplayReady = bet === 0 && lastOutcome.kind === 'REPLAY' && lastOutcome.payout > 0
+
+  return {
+    activePaylineBet,
+    canBetOne: !isSpinning && !isReplayReady && bet < 3 && credits > bet,
+    canMaxBet: !isSpinning && !isReplayReady && credits > 0,
+    canLever: !isSpinning && activePaylineBet > 0,
+    isReplayReady,
+  }
 }
 
 export function evaluateBoard(centerIndices: CenterIndices, bet: number): Outcome {
